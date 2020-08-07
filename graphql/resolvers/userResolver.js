@@ -1,101 +1,150 @@
-const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
-const {UserInputError} = require('apollo-server')
-const User = require('../../database/userModel');
-const { SECRET_KEY } = require('../../config')
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const { UserInputError } = require("apollo-server");
+const User = require("../../database/userModel");
+const { SECRET_KEY, ACCOUNTID, AUTHTOKEN, SERVICEID } = require("../../config");
+const client = require("twilio")(ACCOUNTID, AUTHTOKEN);
 
-const { UserRegistrationValidator, UserLoginValidator } = require('../../utils/validator');
+const {
+  UserRegistrationValidator,
+  UserLoginValidator,
+} = require("../../utils/validator");
 
-const tokenGeneration = (user)=>{
-    return jwt.sign({
-        id: user.id, 
-        username: user.username, 
-        email: user.email
-    }, SECRET_KEY, { expiresIn: '1h'});
-}
+const tokenGeneration = (user) => {
+  return jwt.sign(
+    {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+    },
+    SECRET_KEY,
+    { expiresIn: "1h" }
+  );
+};
 
 module.exports = {
-   Mutation: {
-    // user login
-       async login(_, {email, password}){
-        // normal login validation 
-        const {valid, errors} = UserLoginValidator(email, password)
-
-        if (!valid) {
-            throw new UserInputError("Errors", {errors})
-        }
-
-        // searching for the user from the database
-        const user = await User.findOne({email})
+  Mutation: {
+      // pin verifcation
+    async verify(_, {phone, code}){
+        const user = await User.findOne({ phone });
 
         if (!user) {
-            errors.general = "User not found";
-            throw new UserInputError('User not found', {errors})
+          errors.general = "User not found";
+          throw new UserInputError("User not found", { errors });
         }
 
-        const passwordMatch = await bcrypt.compare(password, user.password)
-         if (!passwordMatch) {
-            errors.general = "User not found";
-            throw new UserInputError('Wrong Credentials', {errors})
-         }
-
-        //  generation of token
-        const token = tokenGeneration(user)
-
-        return {
+        // verify user token
+        const sms = client.verify
+                        .services(SERVICEID)
+                        .verificationChecks
+                        .create({
+                            to: phone,
+                            code: code
+                        })
+                        .then((verify) => console.log(verify))
+                        .catch((err) => console.log(err));
+        
+         return {
             ...user._doc,
             id: user._id,
-            token
-        }
+            token,
+        };
 
+    },
+    // user login
+    async login(_, { phone, password }) {
+      // normal login validation
+      const { valid, errors } = UserLoginValidator(phone, password);
 
-       },
-    
+      if (!valid) {
+        throw new UserInputError("Errors", { errors });
+      }
 
-    // user registration 
-       async register(_, { registerInput: {username, email, password, confirmPassword}} ){
+      // searching for the user from the database
+      const user = await User.findOne({ phone });
 
-        //normal validation for users
-        const {valid, errors}  = UserRegistrationValidator(username, email, password, confirmPassword); 
+      if (!user) {
+        errors.general = "User not found";
+        throw new UserInputError("User not found", { errors });
+      }
 
-        if (!valid) {
-            throw new UserInputError("Errors", {errors})
-        }
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      if (!passwordMatch) {
+        errors.general = "User not found";
+        throw new UserInputError("Wrong Credentials", { errors });
+      }
 
-        // checking if email already exists
-        const userEmail = await User.findOne({email})
-        if (userEmail) {
-            throw new UserInputError("Email already exist in the database", {
-                error: {
-                    email: "This email has already been taken"
-                }
-            })
-        }
+      //  generation of token
+      const token = tokenGeneration(user);
 
-            // password hashing 
-        password = await bcrypt.hash(password, 12);
+      return {
+        ...user._doc,
+        id: user._id,
+        token,
+      };
+    },
 
-        // inserting user into the database
-        const newUser = new User({
-            username,
-            email, 
-            password, 
-            createdAt: new Date().toISOString()
+    // user registration
+    async register(
+      _,
+      { registerInput: { username, email, phone, password, confirmPassword } }
+    ) {
+      //normal validation for users
+      const { valid, errors } = UserRegistrationValidator(
+        username,
+        email,
+        password,
+        confirmPassword
+      );
+
+      if (!valid) {
+        throw new UserInputError("Errors", { errors });
+      }
+
+      // checking if email already exists
+      const userPhone = await User.findOne({ email });
+      if (userPhone) {
+        throw new UserInputError("Phone already exist in the database", {
+          error: {
+            email: "This phone has already been taken",
+          },
         });
+      }
 
-        // storing user 
-        const res = await newUser.save();     
+      // password hashing
+      password = await bcrypt.hash(password, 12);
 
-        // generating token 
-        // creating payload
-        const token = tokenGeneration(res)
+      // inserting user into the database
+      const newUser = new User({
+        username,
+        email,
+        phone,
+        password,
+        createdAt: new Date().toISOString(),
+      });
 
-        return {
-            ...res._doc,
-            id: res._id,
-            token
-        }
+      // storing user
+      const res = await newUser.save();
 
-       }
-   } 
-}
+      // generating token
+      // creating payload
+      const token = tokenGeneration(res);
+
+      // send message for starts to user for input
+      const sms = client.verify
+        .services(SERVICEID)
+        .verifications.create({
+          to: phone,
+          channel: "sms",
+        })
+        .then((verify) => console.log(verify))
+        .catch((err) => console.log(err));
+
+      return {
+        ...res._doc,
+        id: res._id,
+        token,
+      };
+    },
+  },
+};
