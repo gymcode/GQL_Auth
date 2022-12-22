@@ -15,7 +15,7 @@
   "dependencies": {
     "apollo-server": "^2.15.1",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^8.5.1",
+    "jsonwebtoken": "^9.0.0",
     "mongoose": "^5.9.24",
     "twilio": "^3.48.2"
   }
